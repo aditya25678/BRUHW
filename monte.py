@@ -4,6 +4,7 @@ monte_carlo.py
 
 Run Monte Carlo balance-sheet forecasts for multiple LOBs & Accounts,
 using a bootstrap (empirical) distribution of historical returns.
+Accounts with insufficient history are skipped.
 """
 
 import argparse
@@ -17,15 +18,12 @@ def load_data(path: str) -> pd.DataFrame:
     Returns a DataFrame indexed by (LOB,ACCOUNT), columns=PeriodIndex.
     """
     df = pd.read_csv(path)
-    # melt
     df_long = df.melt(
         id_vars=['LOB','ACCOUNT'],
         var_name='Quarter',
         value_name='Value'
     )
-    # Quarter→Period
     df_long['Quarter'] = pd.PeriodIndex(df_long['Quarter'], freq='Q')
-    # pivot
     df_piv = (
         df_long
         .pivot_table(
@@ -48,34 +46,27 @@ def simulate_future(
     compute empirical quarter-over-quarter returns, then
     bootstrap (sample with replacement) those returns to
     simulate n_sims paths for 'horizon' quarters.
+    Raises ValueError if there are no returns.
     Returns a DataFrame of simulated balances:
       index = future PeriodIndex,
       columns = sim_0 ... sim_{n_sims-1}.
     """
-    # get historical returns
     rets = hist.pct_change().dropna().values
     if len(rets) == 0:
         raise ValueError("Not enough data to compute returns")
 
     rng = np.random.default_rng(seed)
-
-    # sample returns with replacement
-    # shape: (n_sims, horizon)
     sim_rets = rng.choice(rets, size=(n_sims, horizon), replace=True)
-
-    # build simulated balance paths
     last_val  = hist.iloc[-1]
     sim_paths = last_val * np.cumprod(1 + sim_rets, axis=1)
 
-    # define future quarters
-    last_q           = hist.index[-1]
-    future_quarters  = pd.period_range(last_q + 1, periods=horizon, freq='Q')
+    last_q          = hist.index[-1]
+    future_quarters = pd.period_range(last_q + 1, periods=horizon, freq='Q')
 
-    # return a DataFrame
     sim_df = pd.DataFrame(
         sim_paths.T,
-        index=future_quarters,
-        columns=[f"sim_{i}" for i in range(n_sims)]
+        index   = future_quarters,
+        columns = [f"sim_{i}" for i in range(n_sims)]
     )
     return sim_df
 
@@ -105,22 +96,19 @@ def run_simulations(
     quantiles: dict[str, float],
     seed: int
 ):
-    # 1) load historical data
     df_piv = load_data(input_csv)
     records = []
 
-    # 2) loop over each LOB/ACCOUNT
     for (lob, acct), hist_row in df_piv.iterrows():
         hist = hist_row.dropna().sort_index()
-        if len(hist) < 2:
-            # skip if we can't compute any returns
+        try:
+            sim_df     = simulate_future(hist, n_sims, horizon, seed)
+            summary_df = summarize_simulations(sim_df, quantiles)
+        except ValueError as e:
+            # skip accounts without enough data
+            print(f"Skipping {lob} / {acct}: {e}")
             continue
 
-        # simulate via bootstrap
-        sim_df     = simulate_future(hist, n_sims, horizon, seed)
-        summary_df = summarize_simulations(sim_df, quantiles)
-
-        # flatten into record list
         for qlabel, row in summary_df.iterrows():
             rec = {
                 'LOB': lob,
@@ -130,7 +118,6 @@ def run_simulations(
             }
             records.append(rec)
 
-    # 3) assemble & save
     out = pd.DataFrame.from_records(records)
     out = out.set_index(['LOB','ACCOUNT','Quantile']).sort_index()
     out.to_csv(output_csv)
