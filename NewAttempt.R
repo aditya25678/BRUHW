@@ -50,7 +50,7 @@ baseline <- read_excel(file.path(input_path, "baseline_ccar.xlsx"))
 baca     <- read_excel(file.path(input_path, "baca_ccar.xlsx"))
 bacsa    <- read_excel(file.path(input_path, "bacsa_ccar.xlsx"))
 
-# Determine each forecast horizon
+# Determine each forecast horizon from your sheets
 h_base  <- nrow(baseline)
 h_baca  <- nrow(baca)
 h_bacsa <- nrow(bacsa)
@@ -70,35 +70,62 @@ f2bacsa <- predict(m2,
                                                        "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
 back2   <- fitted(m2)
 
-### Manual “seeded” forecast — use the ARIMA pred directly so they match exactly ###
-manual_seeded <- as.numeric(f2base$pred)
-print(manual_seeded)
+### Manual “seeded” forecast — replicate predict()’s methodology exactly ###
 
-# Compare manual_seeded vs ARIMA_Pred
+# 1. Grab the last two *fitted* (one‑step) values of the original series
+fitted_vals   <- fitted(m2)                       # length = length(dep_var)
+last_fit      <- tail(fitted_vals, 1)             # ŷₙ|ₙ₋₁
+prev_fit      <- tail(fitted_vals, 2)[1]          # ŷₙ₋₁|ₙ₋₂
+dy_prev       <- last_fit - prev_fit              # Δŷₙ
+y_prev        <- last_fit                         # ŷₙ
+
+# 2. Future exogenous variables for baseline
+x1_future <- as.numeric(baseline$VIX_diff_sqrtd)
+x2_future <- as.numeric(baseline$MMD_MUNI_30Y_AAA_YIELD_Diff)
+
+# 3. Coefficients from the fitted model
+coef_m2 <- coef(m2)
+ar1     <- coef_m2["ar1"]
+b1      <- coef_m2["VIX_diff_sqrtd"]
+b2      <- coef_m2["MMD_MUNI_30Y_AAA_YIELD_Diff"]
+# No intercept/drift (include.mean = FALSE when d=1 in stats::arima)
+
+# 4. Iterate the ARIMA(1,1,0) forecasting equation
+manual_seeded <- numeric(h_base)
+for (i in seq_len(h_base)) {
+  # forecast the *difference* Δŷₙ₊ᵢ
+  dy_new <- ar1 * dy_prev + b1 * x1_future[i] + b2 * x2_future[i]
+  # invert differencing to get ŷₙ₊ᵢ
+  y_new <- y_prev + dy_new
+  # store
+  manual_seeded[i] <- y_new
+  # update for next
+  dy_prev <- dy_new
+  y_prev  <- y_new
+}
+
+# 5. Compare manual vs predict() outputs
 comparison <- data.frame(
+  Horizon       = 1:h_base,
   Manual_seeded = manual_seeded,
   ARIMA_Pred    = as.numeric(f2base$pred),
   Diff          = manual_seeded - as.numeric(f2base$pred)
 )
-print(comparison)
+print(comparison)   # should all be zero (or very near zero)
 
 #### Combine into a forecast table ####
 library(zoo)
-f2base_pred  <- as.numeric(f2base$pred)
-f2baca_pred  <- as.numeric(f2baca$pred)
-f2bacsa_pred <- as.numeric(f2bacsa$pred)
-
-forecast_periods <- length(f2base_pred)  # same as h_base
-start_year      <- 2025
-start_quarter   <- 2
-time_index      <- seq(from = as.yearqtr(paste(start_year, start_quarter, sep = " Q")),
-                       by   = 0.25, length.out = forecast_periods)
+time_index <- seq(
+  from          = as.yearqtr("2025 Q2"),
+  by            = 0.25,
+  length.out    = h_base
+)
 
 forecast_table <- data.frame(
   Quarter  = as.character(time_index),
-  Baseline = f2base_pred,
-  BACA     = f2baca_pred,
-  BACSA    = f2bacsa_pred
+  Baseline = as.numeric(f2base$pred),
+  BACA     = as.numeric(f2baca$pred),
+  BACSA    = as.numeric(f2bacsa$pred)
 )
 print(forecast_table)
 
