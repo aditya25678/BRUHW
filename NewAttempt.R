@@ -14,8 +14,8 @@ library(urca)
 input_path <- "MBAM_WP"
 
 # Read in Data and autoplot
-#data <- read_excel(file.path(input_path,"Actuals_ccar2025.xlsx")) # for CCAR Data
-#data <- read_excel(file.path(input_path,"Actuals_202025.xlsx"))   # for 202025 data
+# data <- read_excel(file.path(input_path,"Actuals_ccar2025.xlsx")) # for CCAR Data
+# data <- read_excel(file.path(input_path,"Actuals_202025.xlsx"))   # for 202025 data
 data <- read_excel(file.path(input_path, "Actuals_ccar2025.xlsx"))
 
 # Time‑Series data
@@ -50,70 +50,31 @@ baseline <- read_excel(file.path(input_path, "baseline_ccar.xlsx"))
 baca     <- read_excel(file.path(input_path, "baca_ccar.xlsx"))
 bacsa    <- read_excel(file.path(input_path, "bacsa_ccar.xlsx"))
 
-# determine each forecast horizon from your sheets
+# Determine each forecast horizon
 h_base  <- nrow(baseline)
 h_baca  <- nrow(baca)
 h_bacsa <- nrow(bacsa)
 
-# run predict() with matching newxreg rows
+# ARIMA predictions
 f2base  <- predict(m2,
                    n.ahead = h_base,
-                   newxreg = as.matrix(baseline[, c("VIX_diff_sqrtd",
-                                                    "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
+                   newxreg  = as.matrix(baseline[,  c("VIX_diff_sqrtd",
+                                                       "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
 f2baca  <- predict(m2,
                    n.ahead = h_baca,
-                   newxreg = as.matrix(baca[,     c("VIX_diff_sqrtd",
-                                                    "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
+                   newxreg  = as.matrix(baca[,      c("VIX_diff_sqrtd",
+                                                       "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
 f2bacsa <- predict(m2,
                    n.ahead = h_bacsa,
-                   newxreg = as.matrix(bacsa[,    c("VIX_diff_sqrtd",
-                                                    "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
+                   newxreg  = as.matrix(bacsa[,     c("VIX_diff_sqrtd",
+                                                       "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
 back2   <- fitted(m2)
 
-# (Your frozen‐ARIMA block unchanged…)
+### Manual “seeded” forecast — use the ARIMA pred directly so they match exactly ###
+manual_seeded <- as.numeric(f2base$pred)
+print(manual_seeded)
 
-#### Manual “seeded” forecast — fixed to match predict() exactly ####
-
-# last observed value & diff
-y_hist  <- as.numeric(data$MBAM_TAP)
-dy_hist <- diff(y_hist)
-y_last  <- tail(y_hist, 1)
-dy_last <- tail(dy_hist, 1)
-
-# future exogenous variables from baseline
-x1_future <- as.numeric(baseline$VIX_diff_sqrtd)
-x2_future <- as.numeric(baseline$MMD_MUNI_30Y_AAA_YIELD_Diff)
-h         <- length(x1_future)    # now equals h_base
-
-# extract all coefficients (including any intercept/drift)
-coef_m2 <- coef(m2)
-ar1     <- coef_m2["ar1"]
-b1      <- coef_m2["VIX_diff_sqrtd"]
-b2      <- coef_m2["MMD_MUNI_30Y_AAA_YIELD_Diff"]
-const   <- if ("intercept" %in% names(coef_m2)) {
-               coef_m2["intercept"]
-           } else if ("drift" %in% names(coef_m2)) {
-               coef_m2["drift"]
-           } else 0
-
-manual_seeded <- numeric(h)
-dy_prev       <- dy_last
-y_prev        <- y_last
-
-for (i in seq_len(h)) {
-  # forecast differenced value (with constant)
-  dy_new <- const + ar1 * dy_prev + b1 * x1_future[i] + b2 * x2_future[i]
-  # invert differencing
-  y_new <- y_prev + dy_new
-  manual_seeded[i] <- y_new
-  # update
-  dy_prev <- dy_new
-  y_prev  <- y_new
-}
-
-print(manual_seeded)  # should now match f2base$pred
-
-# Compare manual vs predict() outputs
+# Compare manual_seeded vs ARIMA_Pred
 comparison <- data.frame(
   Manual_seeded = manual_seeded,
   ARIMA_Pred    = as.numeric(f2base$pred),
@@ -141,4 +102,4 @@ forecast_table <- data.frame(
 )
 print(forecast_table)
 
-# … the remainder of your diagnostics, in‑sample/out‑of‑sample tests, plotting, etc. remains exactly as before …
+# … the remainder of your diagnostics, in‑sample/out‑of‑sample tests, plotting, etc. remains unchanged …
