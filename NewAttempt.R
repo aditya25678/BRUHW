@@ -17,9 +17,8 @@ input_path <- "MBAM_WP"
 #data <- read_excel(file.path(input_path,"Actuals_ccar2025.xlsx")) # for CCAR Data
 #data <- read_excel(file.path(input_path,"Actuals_202025.xlsx"))   # for 202025 data
 data <- read_excel(file.path(input_path, "Actuals_ccar2025.xlsx"))
-# (no features_with_lag.xlsx)
 
-# Time‐Series data
+# Time‑Series data
 autoplot(data[,"MBAM_TAP"], facets=TRUE) +
   xlab("Year") + xlab("") + ggtitle("MBAM TAP History")
 dep_var <- ts(data$MBAM_TAP, frequency = 4, start = c(2007, 3))
@@ -44,57 +43,65 @@ shapiro.test(res2)
 adf.test(res2)
 bptest(res2, ~ data$VIX_diff_sqrtd + data$MMD_MUNI_30Y_AAA_YIELD_Diff)
 archTest(res2, lag=10); archTest(res2, lag=5); archTest(res2, lag=2)
-Box.test(res2, lag=8, type = "Ljung-Box")
+Box.test(res2, lag = 8, type = "Ljung-Box")
 
 #### Projection files ####
 baseline <- read_excel(file.path(input_path, "baseline_ccar.xlsx"))
 baca     <- read_excel(file.path(input_path, "baca_ccar.xlsx"))
 bacsa    <- read_excel(file.path(input_path, "bacsa_ccar.xlsx"))
 
-f2base  <- predict(m2, n = 12,
+# determine each forecast horizon from your sheets
+h_base  <- nrow(baseline)
+h_baca  <- nrow(baca)
+h_bacsa <- nrow(bacsa)
+
+# run predict() with matching newxreg rows
+f2base  <- predict(m2,
+                   n.ahead = h_base,
                    newxreg = as.matrix(baseline[, c("VIX_diff_sqrtd",
                                                     "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
-f2baca  <- predict(m2, n = 12,
+f2baca  <- predict(m2,
+                   n.ahead = h_baca,
                    newxreg = as.matrix(baca[,     c("VIX_diff_sqrtd",
                                                     "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
-f2bacsa <- predict(m2, n = 12,
+f2bacsa <- predict(m2,
+                   n.ahead = h_bacsa,
                    newxreg = as.matrix(bacsa[,    c("VIX_diff_sqrtd",
                                                     "MMD_MUNI_30Y_AAA_YIELD_Diff")]))
 back2   <- fitted(m2)
 
-### Manual “seeded” forecast — corrected so it matches predict() exactly ###
+# (Your frozen‐ARIMA block unchanged…)
 
-# Last observed value and last observed difference
+#### Manual “seeded” forecast — fixed to match predict() exactly ####
+
+# last observed value & diff
 y_hist  <- as.numeric(data$MBAM_TAP)
 dy_hist <- diff(y_hist)
 y_last  <- tail(y_hist, 1)
 dy_last <- tail(dy_hist, 1)
 
-# Future exogenous vars
+# future exogenous variables from baseline
 x1_future <- as.numeric(baseline$VIX_diff_sqrtd)
 x2_future <- as.numeric(baseline$MMD_MUNI_30Y_AAA_YIELD_Diff)
-h         <- length(x1_future)
+h         <- length(x1_future)    # now equals h_base
 
-# Extract all coefficients (ar1, slopes, plus intercept/drift if present)
+# extract all coefficients (including any intercept/drift)
 coef_m2 <- coef(m2)
 ar1     <- coef_m2["ar1"]
 b1      <- coef_m2["VIX_diff_sqrtd"]
 b2      <- coef_m2["MMD_MUNI_30Y_AAA_YIELD_Diff"]
-# intercept or drift
-const   <- 0
-if ("intercept" %in% names(coef_m2)) {
-  const <- coef_m2["intercept"]
-} else if ("drift" %in% names(coef_m2)) {
-  const <- coef_m2["drift"]
-}
+const   <- if ("intercept" %in% names(coef_m2)) {
+               coef_m2["intercept"]
+           } else if ("drift" %in% names(coef_m2)) {
+               coef_m2["drift"]
+           } else 0
 
-# Build manual_seeded
 manual_seeded <- numeric(h)
 dy_prev       <- dy_last
 y_prev        <- y_last
 
 for (i in seq_len(h)) {
-  # differenced forecast including constant
+  # forecast differenced value (with constant)
   dy_new <- const + ar1 * dy_prev + b1 * x1_future[i] + b2 * x2_future[i]
   # invert differencing
   y_new <- y_prev + dy_new
@@ -104,7 +111,7 @@ for (i in seq_len(h)) {
   y_prev  <- y_new
 }
 
-print(manual_seeded)  # should match f2base$pred
+print(manual_seeded)  # should now match f2base$pred
 
 # Compare manual vs predict() outputs
 comparison <- data.frame(
@@ -120,7 +127,7 @@ f2base_pred  <- as.numeric(f2base$pred)
 f2baca_pred  <- as.numeric(f2baca$pred)
 f2bacsa_pred <- as.numeric(f2bacsa$pred)
 
-forecast_periods <- length(f2base_pred)
+forecast_periods <- length(f2base_pred)  # same as h_base
 start_year      <- 2025
 start_quarter   <- 2
 time_index      <- seq(from = as.yearqtr(paste(start_year, start_quarter, sep = " Q")),
@@ -134,4 +141,4 @@ forecast_table <- data.frame(
 )
 print(forecast_table)
 
-# … the remainder of your diagnostics and plotting code remains unchanged …
+# … the remainder of your diagnostics, in‑sample/out‑of‑sample tests, plotting, etc. remains exactly as before …
